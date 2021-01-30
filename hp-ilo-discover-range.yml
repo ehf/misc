@@ -1,0 +1,51 @@
+---
+
+# reference: https://hewlettpackard.github.io/iLOAmpPack-Redfish-API-Docs/#adding-a-range-of-servers
+
+# ansible-playbook -i "localhost," hp-ilo-discover-range.yml --extra-vars "start_addr=<starting-ip-address> end_addr=<ending-ip-address>"
+
+- hosts: all
+  gather_facts: no
+  connection: local
+  vars_prompt:
+    - name: ilo_passwd
+      prompt: "enter ilo passwd"
+      private: yes
+  vars:
+    ilo_amp_server: '10.10.10.10'
+    ilo_rf_base: 'redfish/v1'
+    ilo_rf_service: 'AggregatorService'
+    ilo_rf_action: 'Actions/HpeWfmAggregatorService.DiscoverServersInRange'
+    ilo_discover_it: "{{ ilo_rf_base }}/{{ ilo_rf_service }}/{{ ilo_rf_action }}"
+    ilo_user: 'Administrator'
+    ilo_pw: "{{ ilo_passwd }}"
+    ilo_port: '443'
+    start_addr: '10.10.20.2'
+    end_addr: '10.10.20.3'
+  tasks:
+    - name: "post ilo range to discover"
+      uri:
+        url: "https://{{ ilo_amp_server }}}/{{ ilo_discover_it }}/"
+        force_basic_auth: yes
+        user: "{{ ilo_user }}"
+        password: "{{ ilo_pw }}"
+        method: POST
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+        body_format: json
+        body: '{ "StartAddress": "{{ start_addr }}", "EndAddress": "{{ end_addr }}", "UserName": "{{ ilo_user }}", "Password": "{{ ilo_pw }}", "PortNumber": "{{ ilo_port }}" }'
+      register: iloresult
+      no_log: true
+      tags:
+        - post-ilo-discovery-range
+
+
+# need to tweak the following to track progress on discovery status
+# need to run it to check out the json object returned
+#
+    - debug: msg="ilo post result {{ iloresult }}"
+      tags:
+        - post-ilo-discovery-range
+
+
