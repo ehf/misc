@@ -1,0 +1,87 @@
+---
+
+# BMC must first be upgraded to v1.64 or greater
+
+- hosts: nodes
+  connection: local
+  gather_facts: no
+  vars_prompt:
+    - name: console_pw
+      prompt: "enter console passwd"
+      private: yes
+  vars:
+    console_user: 'ADMIN'
+    console_protocol: 'https'
+    console_domain: 'con.408.systems'
+    console: "{{ inventory_hostname_short }}.{{ console_domain }}"
+    redfish_base: 'redfish/v1'
+    redfish_managers: '{{ redfish_base }}/Managers'
+    redfish_systems: '{{ redfish_base }}/Systems'
+    redfish_account_service: '{{ redfish_base }}/AccountService'
+    redfish_accounts: '{{ redfish_account_service }}/accounts'
+    redfish_bmc_manager: '{{ redfish_managers }}/1'
+    redfish_bmc_interface_endpoint: '{{ redfish_bmc_manager }}/EthernetInterfaces/1'
+    json_set_bmc_hostname: '{ "HostName": "{{ new_bmc_hostname }}" }'
+  tasks:
+    - name: "get bmc hostname"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_interface_endpoint }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs:  no
+      register: get_console_interface_info
+      no_log: true
+      tags:
+        - get-console-interface-info
+
+    - name: "output console HostName"
+      debug:
+        msg: "{{ get_console_interface_info.json.HostName }}"
+      tags:
+        - get-console-interface-info
+
+    - name: "set bmc hostname"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_interface_endpoint }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: PATCH
+        body_format: json
+        body: "{{ json_set_bmc_hostname }}"
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs:  no
+      register: set_console_interface_out
+      no_log: true
+      failed_when:
+        - "'Successfully Completed Request' not in set_console_interace_out.content"
+      when:
+        - "new_bmc_hostname not in get_console_interface_info.json.HostName"
+      tags:
+        - set-console-interface-info
+
+    - name: "get bmc hostname after setting new name"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_interface_endpoint }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs:  no
+      register: get_console_hostname_post_set
+      no_log: true
+      tags:
+        - set-console-interface-info
+
+    - name: "output console HostName"
+      debug:
+        msg: "console hostname set to: {{ get_console_hostname_post_set.json.HostName }}"
+      tags:
+        - set-console-interface-info
