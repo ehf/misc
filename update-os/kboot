@@ -1,0 +1,24 @@
+#!/bin/bash
+
+
+# gather releasever
+if [[ -e /etc/os-release ]]; then
+	rel=$(grep -w 'VERSION_ID' /etc/os-release | cut -d'.' -f1 | grep -oE "[0-9]*")
+elif [[ -e /etc/system-release ]]; then
+	rel=$(cut -d'.' -f1 /etc/system-release | grep -oE "[0-9]")
+else
+	rel=$(cut -d'.' -f1 /etc/redhat-release | grep -oE "[0-9]")
+fi
+
+
+# kboot it
+[[ "$1" != '-' ]] && kernel="$1.el${rel}.$(uname -i)"
+shift
+if [[ "$1" == '-' ]]; then
+    reuse=--reuse-cmdline
+    shift
+fi
+[[ $# == 0 ]] && reuse=--reuse-cmdline
+kernel="${kernel:-$(uname -r)}"
+kargs="/boot/vmlinuz-$kernel --initrd=/boot/initramfs-$kernel.img"
+kexec -l -t bzImage $kargs $reuse --append="$*" && systemctl kexec
