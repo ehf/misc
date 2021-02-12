@@ -1,0 +1,4 @@
+CURRENT_USER=$(logname)
+if [[ "${CURRENT_USER}" == 408_{{ zone | upper }}_ScanUser ]]; then
+    export LD_PRELOAD=/usr/libexec/kcare/kpatch_package.so
+fi
