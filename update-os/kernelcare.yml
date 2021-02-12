@@ -1,0 +1,248 @@
+---
+
+# ansible-playbook -i inventory.txt kernelcare.yml -k -K --become --vault-id $USER/.am-vault.id --limit=$HOST
+
+- hosts: nodes
+  gather_facts: no
+  max_fail_percentage: 49
+  serial: "{{ serial_limit }}"
+  vars:
+    zone: ABC
+    serial_limit: 2
+    pause_seconds: 10
+    my_http_proxy: 'proxy.vip.408.systems:80'
+    yum_repo: 'repo.vip.408.systems'
+    kcare_repo: "http://{{ yum_repo }}/repo"
+    kcare_scanner_user: "408_{{ zone | upper }}_ScanUser"
+    kcare_registration_key: <vaulted-key>
+  handlers:
+    - name: pause in between
+      pause: seconds={{ pause_seconds }}
+  tasks:
+    - name: "remove old repo files"
+      file: path={{ item }} state=absent
+      with_items:
+        - /etc/yum.repos.d/redhat.repo
+        - /etc/yum.repos.d/CentOS.repo
+        - /etc/yum.repos.d/CentOS-Debuginfo.repo
+        - /etc/yum.repos.d/CentOS-Media.repo
+        - /etc/yum.repos.d/CentOS-Vault.repo
+        - /etc/yum.repos.d/CentOS-Sources.repo
+        - /etc/yum.repos.d/CentOS-fasttrack.repo
+        - /etc/yum.repos.d/CentOS-CR.repo
+        - /etc/yum.repos.d/CentOS-Base.repo
+        - /etc/yum.repos.d/CentOS-x86_64-kernel.repo
+      tags:
+        - remove-old-repo-files
+
+    - name: "download KernelCare installation script"
+      get_url:
+        url: "{{ kcare_repo }}/kernelcare/kernelcare_install.sh"
+        dest: /root/kernelcare_install.sh
+        owner: root
+        group: root
+        mode: '0700'
+      tags:
+        - download-kcare-script
+        - install-kcare
+
+    - name: "import KernelCare RPM GPG key"
+      rpm_key:
+        key: "{{ kcare_repo }}/kernelcare/RPM-GPG-KEY-KernelCare"
+        validate_certs: no
+        state: present
+      tags:
+        - import-kcare-gpg-key
+        - install-kcare
+
+    - name: "run the KernelCare installation script"
+      shell: /root/kernelcare_install.sh >> /var/log/kernelcare_install.log
+      environment:
+        KCARE_REPO: "{{ kcare_repo }}"
+        KCARE_SCANNER_USER: "{{ kcare_scanner_user }}"
+      tags:
+        - run-kcare-script
+        - install-kcare
+
+    - name: "stat kernelcare repo file"
+      stat: path=/etc/yum.repos.d/kernelcare.repo
+      register: kcare_reposd_file
+      tags:
+        - run-kcare-script
+        - update-kcare-repo-file
+        - install-kcare
+
+    - name: "update installed kernelcare repo file"
+      ini_file:
+        path: /etc/yum.repos.d/kernelcare.repo
+        section: kernelcare
+        option: baseurl
+        value: "{{ kcare_repo }}/kernelcare/$releasever/$basearch"
+        no_extra_spaces: yes
+        owner: root
+        group: root
+        mode: 0644
+      when:
+        - kcare_reposd_file.stat.isreg is defined
+        - kcare_reposd_file.stat.isreg | bool
+      tags:
+        - run-kcare-script
+        - update-kcare-repo-file
+        - install-kcare
+
+    - name: "update kcare.conf to not auto update"
+      lineinfile:
+        path: /etc/sysconfig/kcare/kcare.conf
+        regexp: '^AUTO_UPDATE='
+        line: 'AUTO_UPDATE=False'
+      tags:
+        - update-kcare-config
+        - install-kcare
+
+    - name: "update kcare.conf with http proxy"
+      lineinfile:
+        path: /etc/sysconfig/kcare/kcare.conf
+        insertafter: EOF
+        line: 'HTTPS_PROXY={{ my_http_proxy }}'
+      tags:
+        - update-kcare-config
+        - install-kcare
+
+    - name: "register KernelCare agent"
+      command: /usr/bin/kcarectl --register {{ kcare_registration_key }}
+      tags:
+        - register-kcare-host
+        - install-kcare
+
+    - name: "check KernelCare license"
+      command: /usr/bin/kcarectl --license-info
+      register: kcare_license_info
+      tags:
+        - check-kcare-installation
+        - install-kcare
+
+    - name: "check KernelCare info"
+      command: /usr/bin/kcarectl --info
+      register: kcare_info
+      tags:
+        - check-kcare-installation
+        - install-kcare
+
+    - name: "check KernelCare version"
+      command: /usr/bin/kcarectl --version
+      register: kcare_version
+      tags:
+        - check-kcare-installation
+        - install-kcare
+
+    - name: "check kernel version before update"
+      shell: uname -r
+      register: check_kernel_pre
+      tags:
+        - update-kernel
+
+    - name: "check uptime and load on host before update"
+      command: uptime
+      register: check_uptime_pre
+      tags:
+        - update-kernel
+
+    - name: "output KernelCare license info"
+      debug: msg={{ kcare_license_info.stdout_lines }}
+      tags:
+        - check-kcare-installation
+
+        - install-kcare
+
+    - name: "output KernelCare info"
+      debug: msg={{ kcare_info.stdout_lines }}
+      tags:
+        - check-kcare-installation
+        - install-kcare
+
+    - name: "output KernelCare version"
+      debug: msg={{ kcare_version.stdout_lines }}
+      tags:
+        - check-kcare-installation
+        - install-kcare
+
+    - name: "output kernel version before update"
+      debug: msg={{ check_kernel_pre.stdout_lines }}
+      tags:
+        - update-kernel
+
+    - name: "output load on host before update"
+      debug: msg={{ check_uptime_pre.stdout_lines }}
+      tags:
+        - update-kernel
+
+    - name: "update kernel"
+      command: /usr/bin/kcarectl --update
+      when: kcare_license_info.stdout.find('Key-based valid license found') != -1
+      register: kcare_update_status
+      notify:
+        - pause in between
+      tags:
+        - update-kernel
+
+    - name: "deploy kernelcare sudoers files"
+      template:
+        src: ./{{ item.name }}
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      with_items:
+        - { name: 'kernelcare.sudoers.j2', dest: '/etc/sudoers.d/kernelcare', mode: '0440' }
+        - { name: 'kernelcare.env.j2', dest: '/usr/libexec/kcare/env', mode: '0644' }
+      tags:
+        - update-kernel
+
+#    - name: "deploy /etc/profile.d file"
+#      template:
+#        src: ./{{ item.name }}
+#        dest: "{{ item.dest }}"
+#        owner: root
+#        group: root
+#        mode: "{{ item.mode }}"
+#      with_items:
+#        - { name: 'kernelcare.cms.sh.j2', dest: '/etc/profile.d/kernelcare.cms.sh', mode: '0644' }
+#      tags:
+#        - update-kernel
+#        - deploy-cms-profiled-file
+
+#    - name: "remove /etc/profile.d file"
+#      file:
+#        path: /etc/profile.d/kernelcare.cms.sh
+#        state: absent
+#      tags:
+#        - update-kernel
+#        - remove-cms-profiled-file
+
+    - name: "output kcare update status"
+      debug: msg={{ kcare_update_status.stdout_lines }}
+      tags:
+        - update-kernel
+
+    - name: "check kernel after update"
+      shell: time /usr/bin/kcarectl --uname
+      register: check_kernel_post
+      tags:
+        - update-kernel
+
+    - name: "output kernel after update"
+      debug: msg={{ check_kernel_post.stdout_lines }}
+      tags:
+        - update-kernel
+
+    - name: "check uptime after update"
+      shell: uptime
+      register: check_uptime_post
+      tags:
+        - udpate-kernel
+
+    - name: "output uptime after update"
+      debug: msg={{ check_uptime_post.stdout_lines }}
+      tags:
+        - update-kernel
+
