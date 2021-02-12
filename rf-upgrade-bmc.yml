@@ -1,0 +1,295 @@
+---
+
+# upgrade bmc from v1.38 to v1.64
+# upgrading from v1.38 to 1.64 results with BMC Firmware endpoint path changing
+# from:
+#    redfish_bmc_firmware_inventory: '{{ redfish_update_service }}/FirmwareInventory/BMC'
+# to:
+#    redfish_bmc_firmware_inventory_new: '{{ redfish_update_service }}/SmcFirmwareInventory/BMC'
+
+# upgrading bmc after 1.64 will need some changes to this playbook.
+# specifically, the use of {{ redfish_bmc_firmware_inventory_new }}
+
+- hosts: nodes
+  connection: local
+  gather_facts: no
+  vars_prompt:
+    - name: console_pw
+      prompt: "enter console passwd"
+      private: yes
+  vars:
+    console_user: 'ADMIN'
+    console_protocol: 'https'
+    console_domain: 'con.408.systems'
+    console: "{{ inventory_hostname_short }}.{{ console_domain }}"
+    resource_to_upgrade: 'bmc'
+    redfish_base: 'redfish/v1'
+    redfish_managers: '{{ redfish_base }}/Managers'
+    redfish_systems: '{{ redfish_base }}/Systems'
+    redfish_account_service: '{{ redfish_base }}/AccountService'
+    redfish_update_service: '{{ redfish_base }}/UpdateService'
+    redfish_accounts: '{{ redfish_account_service }}/accounts'
+    redfish_bmc_manager_endpoint: '{{ redfish_managers }}/1'
+    redfish_bmc_reset: '{{ redfish_bmc_manager_endpoint }}/Actions/Manager.Reset'
+    redfish_bmc_interface_endpoint: '{{ redfish_managers }}/1/EthernetInterfaces/1'
+    redfish_bmc_firmware_inventory: '{{ redfish_update_service }}/FirmwareInventory/BMC'
+    redfish_bmc_firmware_inventory_new: '{{ redfish_update_service }}/SmcFirmwareInventory/BMC'
+    redfish_bmc_firmware_enter_update: '{{ redfish_bmc_firmware_inventory }}/Actions/Oem/FirmwareInventory.EnterBMCUpdateMode'
+    redfish_bmc_firmware_upload_update: '{{ redfish_bmc_firmware_inventory }}/Actions/Oem/FirmwareInventory.UploadBMC'
+    redfish_bmc_firmware_issue_update: '{{ redfish_bmc_firmware_inventory }}/Actions/Oem/FirmwareInventory.UpdateBMC'
+    json_set_bmc_hostname: '{ "HostName": \"{{ new_bmc_hostname }}\" }'
+    json_bmc_update_options: '{ "PreserveCfg": true, "PreserveSdr": true, "PreserveSsl": true, "UpdateBootLdr": true }'
+    update_basedir: '/home/$USER/Downloads/supermicro'
+    bmc_update_file: '{{ update_basedir }}/bmc/SMT_X11AST2500_164/SMT_X11AST2500_164.bin'
+    bios_update_file: '{{ update_basedir }}/bios/X11DDW9.112/X11DDW9.112'
+    bmc_update_version: '1.64'
+    bios_update_version: '3.0a'
+  tasks:
+    - name: "check {{ resource_to_upgrade }} version"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_manager_endpoint }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: bmc_current_version
+      no_log: true
+      tags:
+        - initial-version-check
+
+    - debug:
+        msg: "current {{ resource_to_upgrade }} version is {{ bmc_current_version.json.FirmwareVersion }} and update version is {{ bmc_update_version }}"
+      tags:
+        - initial-version-check
+
+    - fail:
+        msg: "{{ resource_to_upgrade }} current version {{ bmc_current_version.json.FirmwareVersion }} is >= to {{ bmc_update_version }}. Exit."
+      when: "bmc_current_version.json.FirmwareVersion is version(bmc_update_version, '>=')"
+      tags:
+        - initial-version-check
+
+    - name: "check {{ resource_to_upgrade }} update mode"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_firmware_inventory }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: update_mode_check
+      no_log: true
+      tags:
+        - bmc-enter-update
+
+    - name: "enter {{ resource_to_upgrade }} update mode"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_firmware_enter_update }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: POST
+        body_format: json
+        body: '{ }'
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs:  no
+      register: enter_update_out
+      no_log: true
+      failed_when:
+        - "'Successfully Completed Request' not in enter_update_out.content"
+      when:
+        - "'FirmwareInventory.EnterBMCUpdateMode' in update_mode_check.content"
+        - bmc_current_version.json.FirmwareVersion is version(bmc_update_version, '<')
+      tags:
+        - bmc-enter-update
+
+    - name: "check {{ resource_to_upgrade }} after entering update mode"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_firmware_inventory }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: check_post_enter_update_mode
+      no_log: true
+      tags:
+        - bmc-enter-update
+
+    - name: "upload {{ resource_to_upgrade }} update"
+      shell: 'curl -s -k -u {{ console_user}}:{{ console_pw }} \
+              -X POST \
+              --header "Expect:" --header "Content-Type: multipart/form-data" \
+              -F bbbCCC=@{{ bmc_update_file }} \
+              {{ console_protocol }}://{{ console }}/{{ redfish_bmc_firmware_upload_update }}  '
+      register: upload_update_out
+      no_log: true
+      when:
+        - "'FirmwareInventory.UploadBMC' in check_post_enter_update_mode.content"
+      tags:
+        - bmc-upload-update
+
+#    - debug:
+#        msg: "{{ upload_update_out }}"
+#      tags:
+#        - bmc-upload-update
+
+
+#    - name: "upload {{ resource_to_upgrade }} update"
+#      uri:
+#        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_firmware_upload_update }}"
+#        src: "{{ bmc_update_file }}"
+#        headers:
+#          Expect: ''
+#          Content-Type: 'multipart/form-data'
+#        force_basic_auth: yes
+#        user: "{{ console_user }}"
+#        password: "{{ console_pw }}"
+#        method: POST
+#        status_code: 200,202,204
+#        return_content: yes
+#        validate_certs:  no
+#      register: upload_update_out
+#      failed_when: "'Successfully Completed Request' not in upload_update_out.content"
+#      tags:
+#        - bmc-upload-update
+
+    - name: "check {{ resource_to_upgrade }} after uploading bmc update file"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_firmware_inventory }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: check_post_upload_bmc
+      no_log: true
+      tags:
+        - bmc-enter-update
+
+    - name: "issue {{ resource_to_upgrade }} update"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_firmware_issue_update }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: POST
+        body_format: json
+        body: "{{ json_bmc_update_options }}"
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs:  no
+      register: issue_update_out
+      no_log: true
+      failed_when:
+        - "'Successfully Completed Request' not in issue_update_out.content"
+      when:
+        - "'FirmwareInventory.UpdateBMC' in check_post_upload_bmc.content"
+      tags:
+        - bmc-issue-update
+
+    - name: "check until {{ resource_to_upgrade }} reboots "
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_firmware_inventory }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204,404
+        return_content: yes
+        validate_certs: no
+      register: bmc_check_until_reboot
+      no_log: true
+      until:
+        - bmc_check_until_reboot.status == 404
+      retries: 40
+      delay: 30
+      tags:
+        - check-until-bmc-reboot
+
+    - name: "waiting for {{ resource_to_upgrade}} to come back online"
+      wait_for: host={{ console }} port=443  state=started delay=120 timeout=600
+      tags:
+        - version-check-post-upgrade
+
+    - name: "check {{ resource_to_upgrade }} version after upgrade"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_manager_endpoint }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: bmc_post_upgrade_version
+      no_log: true
+      until:
+        - "bmc_post_upgrade_version.json.FirmwareVersion is defined"
+        - "bmc_post_upgrade_version.json.FirmwareVersion is version(bmc_update_version, '==')"
+      retries: 40
+      delay: 30
+      failed_when:
+        - "bmc_post_upgrade_version.json.FirmwareVersion is not version(bmc_update_version, '==')"
+      tags:
+        - version-check-post-upgrade
+
+#    - name: "reset {{ resource_to_upgrade }}, post upgrade"
+#      uri:
+#        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_reset }}"
+#        force_basic_auth: yes
+#        user: "{{ console_user }}"
+#        password: "{{ console_pw }}"
+#        method: POST
+#        body_format: json
+#        body: '{ }'
+#        status_code: 200,202,204
+#        return_content: yes
+#        validate_certs: no
+#      no_log: true
+#      tags:
+#        - bmc-cold-reboot
+
+#    - name: "waiting for {{ resource_to_upgrade}} to come back online"
+#      wait_for: host={{ console }} port=443  state=started delay=120 timeout=600
+#      tags:
+#        - bmc-cold-reboot
+
+    - name: "check {{ resource_to_upgrade }} version after {{ resource_to_upgrade }} reset"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_manager_endpoint }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: bmc_post_reset_version
+      no_log: true
+      until:
+        - "bmc_post_reset_version.json.FirmwareVersion is version(bmc_update_version, '==')"
+      retries: 40
+      delay: 30
+      failed_when:
+        - "bmc_post_reset_version.json.FirmwareVersion is not version(bmc_update_version, '==')"
+      tags:
+        - version-check-post-reset
+        - bmc-cold-reboot
+
+    - debug:
+        msg: "{{ resource_to_upgrade }} upgraded to version {{ bmc_post_reset_version.json.FirmwareVersion }}"
+      tags:
+        - version-check-post-reset
+        - bmc-cold-reboot
+        
+        
