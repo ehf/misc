@@ -1,0 +1,391 @@
+---
+
+#
+# ansible-playbook -i inventory.txt yum-update-os-kboot.yml -u $USER -f 10 -k -K --become -vv -l nodes --extra-vars "kernel=3.10.0-1062.9.1 serial_limit=2"
+#
+#    kernel_el7: '3.10.0-1062.9.1'
+#    kernel_el8: '4.18.0-147.8.1'
+
+
+- hosts: all
+  gather_facts: yes
+  max_fail_percentage: 49
+  serial: "{{ serial_limit }}"
+  vars:
+    repo: repo.vip.408.systems
+    kernel: '3.10.0-1062.9.1'
+    kernelver: '{{ kernel }}.el{{ ansible_distribution_major_version }}.{{ ansible_architecture }}'
+    installed_kernel: "{{ ansible_kernel.split('.el')[0] }}"
+    os_release_version: '7.7'
+    timeout_check: 1200
+    timeout_delay: 30
+    serial_limit: 1
+    pause_seconds: 10
+  handlers:
+    - name: restart dumbari agent
+      service: name=ambari-agent state=restarted enabled=yes
+
+    - name: pause in between
+      pause: seconds={{ pause_seconds }}
+  tasks:
+    - name: "deploy os release version template file"
+      template:
+        src: ./releasever.j2
+        dest: /etc/yum/vars/releasever
+        owner: root
+        group: root
+        mode: 0644
+        backup: no
+      tags:
+        - update-os
+        - deploy-repo
+        - only-yum-update-centos-7
+        - only-yum-update-rhel-7
+        - only-yum-update-centos-8
+        - only-yum-update-rhel-8
+        - deploy-releasever-var-file
+
+    - name: "remove old repo files"
+      file: path={{ item }} state=absent
+      with_items:
+        - /etc/yum.repos.d/redhat.repo
+        - /etc/yum.repos.d/CentOS.repo
+        - /etc/yum.repos.d/CentOS-Debuginfo.repo
+        - /etc/yum.repos.d/CentOS-Media.repo
+        - /etc/yum.repos.d/CentOS-Vault.repo
+        - /etc/yum.repos.d/CentOS-Sources.repo
+        - /etc/yum.repos.d/CentOS-fasttrack.repo
+        - /etc/yum.repos.d/CentOS-CR.repo
+        - /etc/yum.repos.d/CentOS-Base.repo
+        - /etc/yum.repos.d/CentOS-x86_64-kernel.repo
+        - /etc/yum.repos.d/os.repo
+      tags:
+        - update-os
+        - deploy-repo
+        - only-yum-update-centos-7
+        - only-yum-update-rhel-7
+        - only-yum-update-centos-8
+        - only-yum-update-rhel-8
+
+    - name: "create repo for el7"
+      yum_repository:
+        name: "{{ item.name }}"
+        description: "{{ item.name }}-x86_64"
+        file: os
+        baseurl: "{{ item.baseurl }}"
+        enabled: yes
+        gpgcheck: no
+      with_items:
+        - { name: 'OS', baseurl: 'http://{{ repo }}/repo/$osname/$releasever/os/$basearch' }
+        - { name: 'OS-updates', baseurl: 'http://{{ repo }}/repo/$osname/$releasever/updates/$basearch' }
+        - { name: 'OS-extras', baseurl: 'http://{{ repo }}/repo/$osname/$releasever/extras/$basearch' }
+      when:
+        - ansible_distribution_major_version == '7'
+      tags:
+        - update-os
+        - deploy-repo
+        - only-yum-update-centos-7
+        - only-yum-update-rhel-7
+
+    - name: "add optional repo for rhel 7"
+      yum_repository:
+        name: "{{ item.name }}"
+        description: "{{ item.name }}-x86_64"
+        file: os
+        baseurl: "{{ item.baseurl }}"
+        enabled: yes
+        gpgcheck: no
+      with_items:
+        - { name: 'OS-optional', baseurl: 'http://{{ repo }}/repo/$osname/$releasever/optional/$basearch' }
+      when:
+        - ansible_distribution == 'RedHat'
+      tags:
+        - update-os
+        - deploy-repo
+        - only-yum-update-rhel-7
+
+    - name: "create repo for el8"
+      yum_repository:
+        name: "{{ item.name }}"
+        description: "{{ item.name }}-x86_64"
+        file: os
+        baseurl: "{{ item.baseurl }}"
+        enabled: yes
+        gpgcheck: no
+      with_items:
+        - { name: 'OS-BaseOS', baseurl: 'http://{{ repo }}/repo/{{ ansible_distribution }}/$releasever/os/$basearch/BaseOS' }
+        - { name: 'OS-AppStream', baseurl: 'http://{{ repo }}/repo/{{ ansible_distribution }}/$releasever/os/$basearch/AppStream' }
+        - { name: 'OS-updates-BaseOS', baseurl: 'http://{{ repo }}/repo/{{ ansible_distribution }}/$releasever/BaseOS/$basearch/os' }
+        - { name: 'OS-updates-AppStream', baseurl: 'http://{{ repo }}/repo/{{ ansible_distribution }}/$releasever/AppStream/$basearch/os' }
+        - { name: 'OS-extras', baseurl: 'http://{{ repo }}/repo/{{ ansible_distribution }}/$releasever/extras/$basearch/os' }
+        - { name: 'OS-configmanagement', baseurl: 'http://{{ repo }}/repo/{{ ansible_distribution }}/$releasever/configmanagement/$basearch/os' }
+        - { name: 'OS-PowerTools', baseurl: 'http://{{ repo }}/repo/{{ ansible_distribution }}/$releasever/PowerTools/$basearch/os' }
+      when:
+        - ansible_distribution_major_version == '8'
+      tags:
+        - update-os
+        - deploy-repo
+        - only-yum-update-centos-8
+        - only-yum-update-rhel-8
+
+    - name: "check if ambari-agent.ini config is present"
+      stat: path=/etc/ambari-agent/conf/ambari-agent.ini
+      register: ambari_ini_file
+      tags:
+        - update-os
+        - force-https-protocol
+        - enable-ambari-agent
+
+    - name: "force https PROTOCOL_TLSv1_2 in dumbari agent"
+      ini_file:
+        dest: /etc/ambari-agent/conf/ambari-agent.ini
+        section: security
+        option: force_https_protocol
+        value: PROTOCOL_TLSv1_2
+        owner: root
+        group: root
+        mode: 0644
+        state: present
+        create: no
+        backup: yes
+      when:
+        - ambari_ini_file.stat.isreg is defined
+        - ambari_ini_file.stat.isreg | bool
+      notify: restart dumbari agent
+      tags:
+        - update-os
+        - force-https-protocol
+        - enable-ambari-agent
+
+    - name: "ensure ambari agent service is enabled"
+      service: name=ambari-agent enabled=yes state=started
+      when:
+        - ambari_ini_file.stat.isreg is defined
+        - ambari_ini_file.stat.isreg | bool
+      tags:
+        - update-os
+        - enable-ambari-agent
+
+    - name: "yum clean all"
+      command: yum clean all
+      tags:
+        - update-os
+        - only-yum-update-centos-7
+        - only-yum-update-rhel-7
+        - only-yum-update-centos-8
+        - only-yum-update-rhel-8
+
+    - name: "install latest kexec tools"
+      yum:
+        name: kexec-tools
+        disablerepo: '*'
+        enablerepo: 'OS*'
+        state: latest
+        update_cache: yes
+      tags:
+        - install-kexec-tools
+        - update-os
+
+
+    - name: "if needed, install ipmitool"
+      yum:
+        name: ipmitool
+        disablerepo: '*'
+        enablerepo: 'OS*'
+        state: latest
+        update_cache: yes
+      tags:
+        - install-ipmitool
+        - update-os
+
+    - name: "collect console info"
+      shell: ipmitool lan print | awk -F":" '$1 ~ /IP Address|Subnet Mask|Default Gateway IP/ {print $0}'
+      register: console_info
+      tags:
+        - install-ipmitool
+        - update-os
+
+    - name: "output console info"
+      debug: msg={{ console_info.stdout_lines }}
+      tags:
+        - install-ipmitool
+        - update-os
+
+    - name: "yum update centos 7"
+      yum:
+        name: '*'
+        disablerepo: '*'
+        enablerepo: 'OS,OS-updates'
+        state: latest
+        exclude: 'libtirpc*,libsmbios*,smbios-utils-bin*'
+        update_cache: yes
+      when:
+        - ansible_distribution_major_version == '7'
+        - installed_kernel is version(kernel, '<')
+        - ansible_distribution == 'CentOS'
+      notify:
+        - pause in between
+      tags:
+        - update-os
+        - only-yum-update-centos-7
+
+    - name: "yum update rhel 7"
+      yum:
+        name: '*'
+        disablerepo: '*'
+        enablerepo: 'OS,OS-updates,OS-optional'
+        state: latest
+        exclude: 'libtirpc*,libsmbios*,smbios-utils-bin*'
+        update_cache: yes
+      when:
+        - ansible_distribution_major_version == '7'
+        - installed_kernel is version(kernel, '<')
+        - ansible_distribution == 'RedHat'
+      notify:
+        - pause in between
+      tags:
+        - update-os
+        - only-yum-update-rhel-7
+
+    - name: "yum update centos 8"
+      yum:
+        name: '*'
+        disablerepo: '*'
+        enablerepo: 'OS-BaseOS,OS-AppStream,OS-updates-BaseOS,OS-updates-AppStream,OS-extras,OS-PowerTools'
+        state: latest
+        exclude: 'libtirpc*,libsmbios*,smbios-utils-bin*,oci-systemd-hook'
+        update_cache: yes
+      when:
+        - ansible_distribution_major_version == '8'
+        - installed_kernel is version(kernel, '<')
+        - ansible_distribution == 'CentOS'
+      notify:
+        - pause in between
+      tags:
+        - update-os
+        - only-yum-update-centos-8
+
+    - name: "deploy kboot"
+      copy:
+        src: ./kboot
+        dest: /usr/local/sbin/kboot
+        owner: root
+        group: root
+        mode: 0700
+      tags:
+        - update-os
+        - deploy-kboot
+
+    - name: "kboot host"
+      shell: sleep 2 && /usr/local/sbin/kboot {{ kernel }}
+      async: 1
+      poll: 0
+      ignore_errors: true
+      when:
+        - installed_kernel is version(kernel, '<')
+      notify:
+        - pause in between
+      tags:
+        - update-os
+        - kboot-os
+
+#    - name: "Reboot host"
+#      shell: sleep 2 && shutdown -r now "Ansible updates triggered"
+#      async: 1
+#      poll: 0
+#      ignore_errors: true
+#      when:
+#        - installed_kernel is version(kernel, '<')
+#      notify:
+#        - pause in between
+#      tags:
+#        - update-os
+
+
+    - name: "Waiting for host to come back online"
+      local_action: wait_for host={{ inventory_hostname }} port={{ ansible_ssh_port | default(22) }} state=started delay={{ timeout_delay }} timeout={{ timeout_check }}
+      become: no
+      when:
+        - installed_kernel is version(kernel, '<')
+      tags:
+        - update-os
+        - reboot-host
+
+    - name: "remove newly installed repo files"
+      file: path={{ item }} state=absent
+      with_items:
+        - /etc/yum.repos.d/CentOS-Vault.repo
+        - /etc/yum.repos.d/CentOS-Sources.repo
+        - /etc/yum.repos.d/CentOS-Media.repo
+        - /etc/yum.repos.d/CentOS-fasttrack.repo
+        - /etc/yum.repos.d/CentOS-Debuginfo.repo
+        - /etc/yum.repos.d/CentOS-CR.repo
+        - /etc/yum.repos.d/CentOS-Base.repo
+        - /etc/yum.repos.d/redhat.repo
+        - /etc/yum.repos.d/CentOS-PowerTools.repo
+        - /etc/yum.repos.d/CentOS-HA.repo
+        - /etc/yum.repos.d/CentOS-Extras.repo
+        - /etc/yum.repos.d/CentOS-Devel.repo
+        - /etc/yum.repos.d/CentOS-centosplus.repo
+        - /etc/yum.repos.d/CentOS-AppStream.repo
+        - /etc/yum.repos.d/CentOS-x86_64-kernel.repo
+      tags:
+        - update-os
+        - remove-repo-files
+        - reboot-host
+
+    - name: "remove releasever yum var file to rollback to default $releasever value"
+      file: path=/etc/yum/vars/releasever state=absent
+      tags:
+        - update-os
+        - remove-releasever-var-file
+        - reboot-host
+
+    - name: "deploy os release version template file with default $releasever value"
+      template:
+        src: ./releasever.post.j2
+        dest: /etc/yum/vars/releasever
+        owner: root
+        group: root
+        mode: 0644
+        backup: no
+      tags:
+        - update-os
+        - deploy-repo
+        - only-yum-update-centos-7
+        - only-yum-update-rhel-7
+        - only-yum-update-centos-8
+        - only-yum-update-rhel-8
+        - deploy-releasever-post-var-file
+        - reboot-host
+
+    - name: "check kernel"
+      shell: uname -r
+      register: checkkernel
+      tags:
+        - update-os
+        - check-kernel
+        - reboot-host
+
+    - name: "output kernel"
+      debug: msg={{ checkkernel.stdout_lines }}
+      tags:
+        - update-os
+        - check-kernel
+        - reboot-host
+
+    - name: "check uptime"
+      shell: uptime
+      register: checkuptime
+      tags:
+        - update-os
+        - check-uptime
+        - reboot-host
+
+    - name: "output uptime"
+      debug: msg={{ checkuptime.stdout_lines }}
+      notify: restart dumbari agent
+      tags:
+        - update-os
+        - check-uptime
+        - reboot-host
