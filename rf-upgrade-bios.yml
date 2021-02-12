@@ -1,0 +1,247 @@
+---
+
+# upgrade bios
+
+# run this playbook only after bmc has been upgraded
+
+- hosts: nodes
+  connection: local
+  gather_facts: no
+  vars_prompt:
+    - name: console_pw
+      prompt: "enter console passwd"
+      private: yes
+  vars:
+    console_user: 'ADMIN'
+    console_protocol: 'https'
+    console_domain: 'con.408.systems'
+    console: "{{ inventory_hostname_short }}.{{ console_domain }}"
+    resource_to_upgrade: 'bios'
+    redfish_base: 'redfish/v1'
+    redfish_managers: '{{ redfish_base }}/Managers'
+    redfish_systems: '{{ redfish_base }}/Systems'
+    redfish_account_service: '{{ redfish_base }}/AccountService'
+    redfish_update_service: '{{ redfish_base }}/UpdateService'
+    redfish_accounts: '{{ redfish_account_service }}/accounts'
+    redfish_host_system_endpoint: '{{ redfish_systems }}/1'
+    redfish_bmc_manager_endpoint: '{{ redfish_managers }}/1'
+    redfish_bmc_manager_logservice: '{{ redfish_bmc_manager_endpoint }}/LogServices'
+    redfish_bmc_manager_logentries: '{{ redfish_bmc_manager_logservice }}/Log1/Entries'
+    redfish_bmc_manager_logreset: '{{ redfish_bmc_manager_logservice}}/Log1/Actions/LogService.Reset'
+    redfish_firmware_inventory_new: '{{ redfish_update_service }}/SmcFirmwareInventory'
+    redfish_host_reset: '{{ redfish_host_system_endpoint }}/Actions/ComputerSystem.Reset'
+    redfish_bmc_reset: '{{ redfish_bmc_manager_endpoint }}/Actions/Manager.Reset'
+    redfish_bmc_interface_endpoint: '{{ redfish_managers }}/1/EthernetInterfaces/1'
+    redfish_bmc_firmware_inventory: '{{ redfish_update_service }}/FirmwareInventory/BMC'
+    redfish_bmc_firmware_inventory_new: '{{ redfish_update_service }}/SmcFirmwareInventory/BMC'
+    redfish_bmc_firmware_enter_update: '{{ redfish_bmc_firmware_inventory }}/Actions/Oem/FirmwareInventory.EnterBMCUpdateMode'
+    redfish_bmc_firmware_upload_update: '{{ redfish_bmc_firmware_inventory }}/Actions/Oem/FirmwareInventory.UploadBMC'
+    redfish_bmc_firmware_issue_update: '{{ redfish_bmc_firmware_inventory }}/Actions/Oem/FirmwareInventory.UpdateBMC'
+    redfish_bios_firmware_inventory_new: '{{ redfish_firmware_inventory_new }}/SmcFirmwareInventory/BIOS'
+    redfish_bios_firmware_enter_update: '{{ redfish_bios_firmware_inventory_new }}/Actions/SmcFirmwareInventory.EnterUpdateMode'
+    redfish_bios_firmware_upload_update: '{{ redfish_bios_firmware_inventory_new }}/Actions/SmcFirmwareInventory.Upload'
+    redfish_bios_firmware_issue_update: '{{ redfish_bios_firmware_inventory_new }}/Actions/SmcFirmwareInventory.Update'
+    json_set_bmc_hostname: '{ "HostName": \"{{ new_bmc_hostname }}\" }'
+    json_graceful_restart: '{ "ResetType": "GracefulRestart" }'
+    json_bmc_update_options: '{ "PreserveCfg": true, "PreserveSdr": true, "PreserveSsl": true, "UpdateBootLdr": true }'
+    json_bios_update_options: '{ "PreserveME": true, "PreserveNVRAM": true, "PreserveSMBIOS": true }'
+    update_basedir: '/home/$USER/Downloads/supermicro'
+    bmc_update_file: '{{ update_basedir }}/bmc/SMT_X11AST2500_164/SMT_X11AST2500_164.bin'
+    bios_update_file: '{{ update_basedir }}/bios/X11DDW9.112/X11DDW9.112'
+    bmc_update_version: '1.64'
+    bios_update_version: '3.0a'
+  tasks:
+    - name: "check {{ resource_to_upgrade }} version"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_host_system_endpoint }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: bios_current_version
+      tags:
+        - initial-version-check
+
+    - debug:
+        msg: "current {{ resource_to_upgrade }} version is {{ bios_current_version.json.BiosVersion }} and update version is {{ bios_update_version }}"
+      tags:
+        - initial-version-check
+
+    - fail:
+        msg: "{{ resource_to_upgrade }} current version {{ bios_current_version.json.BiosVersion }} is >= to {{ bios_update_version }}. Exit."
+      when: "bios_current_version.json.BiosVersion is version(bios_update_version, '>=')"
+      tags:
+        - initial-version-check
+
+      ##no_log: true
+    - name: "enter {{ resource_to_upgrade }} update mode"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bios_firmware_enter_update }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: POST
+        body_format: json
+        body: '{ }'
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs:  no
+      register: enter_update_out
+      failed_when: "'Successfully Completed Request' not in enter_update_out.json.Success.Message"
+      tags:
+        - bios-enter-update
+
+    - name: "upload {{ resource_to_upgrade }} update"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bios_firmware_upload_update }}"
+        src: "{{ bios_update_file }}"
+        headers:
+          Expect: ''
+          Content-Type: 'multipart/form-data'
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: POST
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs:  no
+      register: upload_update_out
+      failed_when: "'Successfully Completed Request' not in upload_update_out.json.Success.Message"
+      tags:
+        - bios-upload-update
+
+    - name: "reset event logs"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_manager_logreset }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: POST
+        body_format: json
+        body: '{ }'
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: event_logs_reset
+      failed_when: "'Successfully Completed Request' not in event_logs_reset.json.Success.Message"
+      tags:
+        - bmc-reset-logs
+
+    - name: "confirm logs have been cleared"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_manager_logentries }}/1"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: event_logs_post_reset
+      failed_when: "'BMC event logs were cleared successfully' not in event_logs_post_reset.json.Description"
+      tags:
+        - bmc-reset-logs
+
+    - name: "issue {{ resource_to_upgrade }} update"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bios_firmware_issue_update }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: POST
+        body_format: json
+        body: "{{ json_bios_update_options }}"
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs:  no
+      register: issue_update_out
+      failed_when: "'Successfully Accepted Request' not in issue_update_out.json.Accepted.Message"
+      tags:
+        - bios-issue-update
+
+    - name: "check {{ resource_to_upgrade }} upgrade status"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bios_firmware_inventory_new }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: bios_upgrade_status
+      until: "bios_upgrade_status.json.UpdateStatus is not defined"
+      retries: 20
+      delay: 20
+      tags:
+        - check-bios-upgrade-status
+
+    - name: "confirm logs show BIOS upgraded successfully"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_bmc_manager_logentries }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: event_logs_post_upgrade
+      failed_when: "'BIOS was updated successfully' not in event_logs_post_upgrade.json.Members"
+      tags:
+        - check-bios-upgrade-status
+
+    - name: "reset host, post upgrade"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_host_reset }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: POST
+        body_format: json
+        body: "{{ json_graceful_restart }}"
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: reset_host_out
+      failed_when: "'Successfully Completed Request' not in reset_host_out.json.Success.Message"
+      tags:
+        - reboot-host
+
+    - name: "check for host to come back online before proceeding to next step"
+      wait_for:
+        host: {{ inventory_hostname }}
+        port: {{ ansible_ssh_port | default(22) }}
+        delay: 30
+        timeout: 800
+      tags:
+        - reboot-host
+
+    - name: "check {{ resource_to_upgrade }} version after host reset"
+      uri:
+        url: "{{ console_protocol }}://{{ console }}/{{ redfish_host_system_endpoint }}"
+        force_basic_auth: yes
+        user: "{{ console_user }}"
+        password: "{{ console_pw }}"
+        method: GET
+        status_code: 200,202,204
+        return_content: yes
+        validate_certs: no
+      register: bios_post_reset_version
+      until: "bios_post_reset_version.json.BiosVersion is version(bios_update_version, '==')"
+      retries: 10
+      delay: 20
+      failed_when: "bios_post_reset_version.json.BiosVersion is not version(bios_update_version, '==')"
+      tags:
+        - version-check-post-reset
+
+    - debug:
+        msg: "{{ resource_to_upgrade }} upgraded to version {{ bios_post_reset_version.json.BiosVersion }}"
+      tags:
+        - version-check-post-reset
+        
+        
+        
