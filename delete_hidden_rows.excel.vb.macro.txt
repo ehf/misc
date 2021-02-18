@@ -1,0 +1,11 @@
+Sub DeleteHiddenRows()
+  Dim sht As Worksheet
+  Dim LastRow
+  Set sht = ActiveSheet
+  LastRow = sht.UsedRange.Rows(sht.UsedRange.Rows.Count).Row
+
+  For i = LastRow To 1 Step -1
+  If Rows(i).Hidden = True Then Rows(i).EntireRow.Delete
+  Next
+
+End Sub
