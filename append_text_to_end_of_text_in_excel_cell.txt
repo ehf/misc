@@ -1,0 +1,6 @@
+Sub AppendToExistingonRight()
+Dim c As Range
+For Each c In Selection
+If c.Value <> "" Then c.Value = c.Value & ".a.408.systems"
+Next
+End Sub
