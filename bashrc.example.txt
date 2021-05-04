@@ -1,0 +1,94 @@
+
+###
+export ANSIBLE_HOST_KEY_CHECKING=False
+export EDITOR=vim
+export PS1="[\$(date +%H:%M)]:[\u@\h:\W]\$ "
+###export PS1="[\A]:[\u@elpaso:\W]\$ "
+###export PS1="[\A]:[\u@quetzal:\W]\$ "
+export TERM='xterm-256color'
+##export JAVA_HOME=/usr/java/latest
+##export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk1.8.0_20.jdk/Contents/Home
+###export JAVA_HOME=$(/usr/libexec/java_home)
+export HISTSIZE=99999
+export HISTFILESIZE=99999
+export HISTTIMEFORMAT="%Y-%m-%d %T -> "
+export HISTCONTROL=erasedups
+export HISTIGNORE="&:ls:l:[bf]g:exit"
+export PATH=$PATH
+shopt -s histappend
+set -o histexpand
+set -o vi
+
+
+alias la='ls -Al'               # show hidden files
+###alias ls='ls -hF --color'    # add colors for filetype recognition
+alias ls='ls -hF'       		# add colors for filetype recognition
+alias lx='ls -lXB'              # sort by extension
+alias lk='ls -lSr'              # sort by size
+alias lc='ls -lcrh'         	# sort by change time
+alias lu='ls -lurh'           	# sort by access time
+alias lr='ls -lRh'              # recursive ls
+alias lt='ls -ltrh'             # sort by date
+alias ll='ls -lsh'              #
+alias lm='ls -alh |more'        # pipe through 'more'
+alias tree='tree -Csu'          # alternative to 'ls'
+alias lsd='ls -lsd'
+alias las='ls -lash'
+alias grc='grep -i --color'
+alias dfl='df -h'
+alias dfh='df -h'
+alias git="SSH_ASKPASS='' git"
+
+
+
+### FUNCTIONS
+
+  function ldl
+     {
+     # Display directory permissions
+     if test $1x = 'x'; then
+         ls -l|grep ^d|more
+     else
+         ls -lsd $1 | more
+     fi
+     }
+
+
+  function psg
+     {
+     if [ -z "$1" ]; then
+             ps auxw|more
+             return 0
+     fi
+     ps auxw | grep $1 | grep -v grep|more
+       return 0
+     }
+
+  function psgw
+     {
+     if [ -z "$1" ]; then
+             ps auxwwee|more
+             return 0
+     fi
+     ps auxwwee | grep $1 | grep -v grep|more
+       return 0
+     }
+
+  function psgmore
+     {
+     if [ -z "$1" ]; then
+             ps auxw|more
+             return 0
+     fi
+     ps auxw | grep -v grep|more
+       return 0
+     }
+
+
+
+
+
+# log to file
+##/usr/bin/script ~/Documents/terminal-logs/terminal_$(date +%F.%T).log
+
+# stty columns 160
