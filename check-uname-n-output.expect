@@ -1,0 +1,47 @@
+#!/usr/bin/expect -f
+
+
+
+log_user 0
+set timeout 10
+set send_slow {1 0.02}
+
+set user [lindex $argv 0]
+set host [lindex $argv 1]
+
+
+set pwfile [open ".c" r]
+set pw [read $pwfile]
+close $pwfile
+
+set password $pw
+
+spawn ssh -o "StrictHostKeyChecking=no" -o "GlobalKnownHostsFile=/dev/null" -o "UserKnownHostsFile=/dev/null" $host -l $user
+expect {
+    "Password:" {
+       send "$password\r"
+    }
+    "ssh: connect to host $host port 22: Connection refused" {
+       puts "$host,connection_refused"
+       exit
+    }
+    "ssh: connect to host $host port 22: No route to host" {
+       puts "$host,no_route_to_host"
+       exit
+    }
+    timeout {
+       puts "$host,connection_timeout"
+       exit
+    }
+}
+expect "*$user*"
+
+send -s " uname -n" ; send -s "\r"; sleep 1
+expect -re "\r\n(.*?)\r\n"
+puts "$host,$expect_out(1,string)"
+
+send -s " exit\r"
+
+
+
+exit 0
