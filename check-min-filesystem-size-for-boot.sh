@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # example:
-## > ./check-min-filesystem-size.sh /boot
+## > ./check-min-filesystem-size.sh
 ## OK        /boot available disk space is 108MB and 70MB or greater is needed to complete OS patching
 ## >
 #
