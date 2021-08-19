@@ -1,0 +1,1 @@
+echo "+noall +answer" > ~/.digrc
