@@ -1,0 +1,35 @@
+
+# .pre-commit-config.yaml 
+
+$ cat .pre-commit-config.yaml 
+---
+repos:
+  - repo: https://github.com/ansible-community/ansible-lint.git
+    rev: v5.2.0
+    hooks:
+      - id: ansible-lint
+        files: \.(yaml|yml)$
+        
+$
+
+
+# .yamllint
+
+$ cat .yamllint 
+---
+
+yaml-files:
+  - '*.yaml'
+  - '*.yml'
+
+rules:
+  truthy:
+    level: error
+    allowed-values:
+      - 'yes'
+      - 'no'
+      - 'true'
+      - 'false'
+      - 'True'
+      - 'False'
+$
