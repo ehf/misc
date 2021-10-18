@@ -1,0 +1,55 @@
+#!/usr/bin/expect -f
+
+log_user 0
+set timeout 10
+set send_slow {1 0.02}
+
+set user [lindex $argv 0]
+set ilo [lindex $argv 1]
+#set password [lindex $argv 1]
+#set ilo [lindex $argv 2]
+
+set pwfile [open ".c" r]
+set pw [read $pwfile]
+close $pwfile
+
+set password $pw
+
+spawn ssh -o "StrictHostKeyChecking=no" $ilo -l $user
+expect {
+    "Administrator@$ilo's password:" {
+       send "$password\r"
+    }
+    "ssh: connect to host $ilo port 22: Connection refused" {
+       puts "$ilo,connection_refused"
+       exit
+    }
+    timeout {
+       puts "$ilo,connection_timeout"
+       exit
+    }
+}
+expect "</>hpiLO->"
+send -s "vsp" ; sleep 1 ; send -s "\r"; sleep 1
+expect "* login:"
+
+#expect {
+#    "* login:" {
+#       #puts "at login prompt"
+#    }
+#    "\[a-z0-9].*#" {
+#       #puts "already logged in"
+#    }
+#    "http://*esx*/" {
+#       puts "$ilo,esx_host"
+#    }
+#}
+
+log_user 1
+if {[regexp -line {.*login:$} $expect_out(buffer) console_prompt]} {
+   set console_prompt [string trimright $console_prompt]
+   puts $console_prompt
+}
+
+
+exit 0
