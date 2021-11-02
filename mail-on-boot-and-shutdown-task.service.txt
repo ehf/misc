@@ -1,0 +1,16 @@
+# cat /etc/systemd/system/mail-on-boot-and-shutdown-task.service
+
+[Unit]
+Description=Send a mail on Boot and Shutdown Task
+Requires=postfix.service
+After=network-online.target postfix.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/bin/bash -c '/usr/bin/mail -s "Service Start" root@localhost <<< "Service Start"'
+ExecStop=/bin/bash -c '/usr/bin/mail -s "Service Stop" root@localhost <<< "Service Stop"; sleep 5'
+
+[Install]
+WantedBy=multi-user.target
+
