@@ -12,7 +12,7 @@ if [[ $? -eq 0 ]]; then
       fuser -v /var/lib/rpm/__db.[[:digit:]]* 2>&1 | tee /var/tmp/rpmdb-fuser-check-${DATE}.log
    fi
 else
-   printf "DB_RUNRECOVERY error not found.\nWill not run 'rpm --rebuilddb'.\n"
+   printf "DB_RUNRECOVERY error not found. Will not run 'rpm --rebuilddb'.\n"
 fi
 
 exit 0
