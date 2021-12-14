@@ -62,15 +62,6 @@ do
          output_match
       fi
    fi
-
-#   if [[ $? -eq 0 ]]; then
-#      file_to_check=$(grep -r -w -F $i ${mdb_path} 2>&1 | awk -F\: '{ print $1 }')
-#      if [[ -s ${file_to_check} ]];then
-#         printf "${i},$file_to_check,"
-#         awk -F\: '/^status/ { print $2 }' ${file_to_check} | xargs
-#      fi
-#   fi
-
 done
 
 exit 0
