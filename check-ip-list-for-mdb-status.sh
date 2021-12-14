@@ -23,11 +23,9 @@ validate_ip() {
 
    echo "${ipaddr}" | grep -q "[[:alpha:]]"
    if [[ $? -eq 0 ]];then
-      ##printf "$ipaddr,invalid_IP,\n"
       continue
    fi
-
-   ##if [[ ${ipaddr} =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+   
    if [[ ${ipaddr} =~ ^[[:digit:]]{1,3}\.[[:digit:]]{1,3}\.[[:digit:]]{1,3}\.[[:digit:]]{1,3}$ ]]; then
       OIFS=$IFS
       IFS='.'
