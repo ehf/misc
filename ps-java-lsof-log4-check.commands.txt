@@ -1,0 +1,6 @@
+# 2/3/2022 
+
+for i in $(pgrep -f java); do ps --noheader -ww -p $i -o user:30, -o %p, -o lstart, -o %c, -o %a ; done | tee /var/tmp/$(hostname).ps.java.check.$(date +%Y%m%d.%s)
+
+for i in $(pgrep -f java) ; do sudo lsof -p $i | grep -i log4j ; printf "\n\n"; done | tee /var/tmp/$(hostname).lsof.java.log4j.check.$(date +%Y%m%d.%s)
+
