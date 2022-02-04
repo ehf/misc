@@ -1,0 +1,22 @@
+set -g prefix C-a
+unbind C-b
+bind C-a send-prefix
+bind | split-window -h
+bind _ split-window -v
+bind h select-pane -L
+bind j select-pane -D
+bind k select-pane -U
+set -g status-bg colour237
+set -g status-left-length 20
+set -g status-left '#[fg=colour232][#[bg=white,fg=black]#S#[bg=white,fg=black,dim]:#H#[fg=colour232]]'
+set-window-option -g window-status-format '#[fg=black,dim]#I#[fg=red]:#[default]#W#[fg=colour232,dim]#F'
+set-window-option -g window-status-current-format '#[bg=black,fg=red,bold]#I#[bg=black,fg=red]:#[fg=white]#W#[fg=dim]#F'
+set -g status-right-length 150
+set -g status-right '#[bg=colour237,fg=colour11][#T] [%a, %d-%b-%Y %H:%M]'
+set-option -g status-keys vi
+set-window-option -g mode-keys vi
+set -g display-time 3000
+bind r source-file ~/.tmux.conf
+set -g history-limit 99999999
+#set-window-option -g mode-mouse on
+set -g base-index 1
