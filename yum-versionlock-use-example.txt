@@ -1,0 +1,10 @@
+sudo yum versionlock delete '0:httpd-2.4.6-97.el7.centos.4.*'
+sudo yum versionlock delete '0:httpd-tools-2.4.6-97.el7.centos.4.*'
+
+sudo yum update httpd httpd-tools 
+
+sudo systemctl status httpd
+sudo systemctl restart httpd 
+sudo systemctl status httpd 
+
+sudo yum versionlock add httpd httpd-tools
