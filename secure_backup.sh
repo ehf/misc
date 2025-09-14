@@ -223,3 +223,5 @@ if [[ "$MODE" != "--dry-run" ]]; then
   echo "Mount point for DMG will be: /Volumes/${VOLNAME}"
   echo "Drag-and-drop your chosen file(s) into Google Drive."
 fi
+
+##DONE
