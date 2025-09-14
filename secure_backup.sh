@@ -3,7 +3,7 @@ set -euo pipefail
 
 # secure_backup.sh
 # Create an encrypted backup of a source directory as DMG, 7z, or both,
-# while excluding directories recursively (e.g., .git/.cache/.jenkins anywhere).
+# excluding directories recursively (e.g., .git/.cache/.jenkins anywhere).
 #
 # Usage:
 #   ./secure_backup.sh --dmg  EXCLUDES_FILE OUTPUT_BASE [--source DIR]
@@ -12,17 +12,16 @@ set -euo pipefail
 #
 # Examples:
 #   ./secure_backup.sh --dmg  excludes.txt ~/Desktop/home-backup --source "$HOME"
-#   ./secure_backup.sh --7z   excludes.txt ~/Desktop/home-backup --source "$HOME"
 #   ./secure_backup.sh --both excludes.txt ~/Desktop/home-backup --source "$HOME"
 #
-# Outputs (based on OUTPUT_BASE):
-#   ~/Desktop/home-backup.dmg
-#   ~/Desktop/home-backup.7z
+# Outputs (date-stamped):
+#   ~/Desktop/home-backup-YYYYMMDD.dmg
+#   ~/Desktop/home-backup-YYYYMMDD.7z
 #
 # Requirements:
 #   - macOS (hdiutil included)
 #   - 7z (p7zip):   brew install p7zip
-#   - expect:       brew install expect   # for secure non-argv password automation with 7z
+#   - expect:       brew install expect
 
 usage() {
   cat <<'USAGE'
@@ -32,14 +31,13 @@ Usage:
 Args:
   --dmg|--7z|--both   Choose which artifact(s) to produce
   EXCLUDES_FILE       Text file; one directory pattern per line (e.g., .git, .cache)
-  OUTPUT_BASE         Output path WITHOUT extension; script adds .dmg/.7z
+  OUTPUT_BASE         Output path WITHOUT extension (script appends -YYYYMMDD and .dmg/.7z)
   --source DIR        Source directory (default: $HOME)
 
 Notes:
   - Exclusions apply recursively (e.g., ".git" excludes any ".git" at any depth).
   - DMG uses AES-256 with -stdinpass (no password in argv).
-  - 7z uses AES-256 with header encryption (-mhe=on). 'expect' feeds the password
-    to 7z's interactive prompts, avoiding argv/env leaks.
+  - 7z uses AES-256 with header encryption (-mhe=on), password fed via 'expect'.
 USAGE
   exit 1
 }
@@ -66,8 +64,11 @@ OUTDIR="$(dirname "$OUTPUT_BASE")"
 BASENAME="$(basename "$OUTPUT_BASE")"
 mkdir -p "$OUTDIR"
 
-DMG_PATH="${OUTPUT_BASE}.dmg"
-SEVENZ_PATH="${OUTPUT_BASE}.7z"
+DATESTAMP="$(date +%Y%m%d)"
+
+DMG_PATH="${OUTPUT_BASE}-${DATESTAMP}.dmg"
+SEVENZ_PATH="${OUTPUT_BASE}-${DATESTAMP}.7z"
+VOLNAME="${BASENAME}-${DATESTAMP}"
 
 # Read passphrase once (won't be echoed)
 read -s -p "Enter passphrase (min 12 chars recommended): " PASSPHRASE; echo
@@ -101,13 +102,14 @@ create_dmg() {
   local RSYNC_EXCLUDES=()
   build_rsync_excludes RSYNC_EXCLUDES
 
+  # Progress: change --progress to --info=progress2 for cleaner, single-line updates
   rsync -aE --progress "${RSYNC_EXCLUDES[@]}" "${SOURCE}/" "${STAGE_DIR}/"
 
   echo ">> [DMG] Creating encrypted DMG: ${DMG_PATH}"
   (echo "${PASSPHRASE}") | hdiutil create \
     -encryption AES-256 \
     -stdinpass \
-    -volname "${BASENAME:-SecureVolume}" \
+    -volname "${VOLNAME}" \
     -format UDZO \
     -srcfolder "${STAGE_DIR}" \
     "${DMG_PATH}" >/dev/null
@@ -116,6 +118,7 @@ create_dmg() {
 
   echo ">> [DMG] Verifying encryption metadata:"
   hdiutil imageinfo "${DMG_PATH}" | egrep -i 'Encryption|Format' || true
+  echo ">> [DMG] Volume name on mount will be: /Volumes/${VOLNAME}"
 }
 
 create_7z() {
@@ -127,18 +130,16 @@ create_7z() {
 
   local EXCLUDE_FLAGS=()
   build_7z_excludes EXCLUDE_FLAGS
-
-  # Join excludes for expect; run via sh -c so the flags expand
   EXCL="${EXCLUDE_FLAGS[*]}"
-  export PASSPHRASE EXCL SEVENZ_PATH
 
+  export PASSPHRASE EXCL SEVENZ_PATH
   expect <<'EOF'
 set timeout -1
 set pass $env(PASSPHRASE)
 set excl $env(EXCL)
 set out  $env(SEVENZ_PATH)
-# Use sh -c to expand the exclude flags correctly
-spawn sh -c "7z a -t7z -mhe=on -p \"$out\" . $excl"
+# Add -bb1 for basic progress; drop it if you want quieter output
+spawn sh -c "7z a -t7z -mhe=on -bb1 -p \"$out\" . $excl"
 expect "Enter password" { send -- "$pass\r" }
 expect "Enter password again" { send -- "$pass\r" }
 expect eof
@@ -164,4 +165,5 @@ print_checksums
 echo ">> Done."
 [[ -f "${SEVENZ_PATH}" ]] && echo "7z archive: ${SEVENZ_PATH}"
 [[ -f "${DMG_PATH}"    ]] && echo "DMG image : ${DMG_PATH}"
+echo "Mount point for DMG will be: /Volumes/${VOLNAME}"
 echo "Drag-and-drop your chosen file(s) into Google Drive."
