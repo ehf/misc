@@ -29,8 +29,8 @@ Usage:
 
 Args:
   --dmg|--7z|--both   Choose which artifact(s) to produce
-  --dry-run           Preview only: show rsync dry-run and EVERY excluded path found,
-                      and display the translated 7z exclude flags. No archives created.
+  --dry-run           Preview only: print ONLY the directories that will be excluded
+                      (fast), and show the translated 7z exclude flags. No archives created.
   EXCLUDES_FILE       Text file (rsync-style): one pattern per line
                       - '/Name/'  => exclude top-level "Name" only (anchored)
                       - 'Name/'   => exclude any "Name" at any depth
@@ -85,41 +85,55 @@ build_7z_excludes_from_file() {
   done < "$file"
 }
 
-# List EVERY path that would be excluded, per pattern (preview only).
-# This uses 'find' to enumerate matches, mirroring the semantics we apply:
-# - anchored '/Path/...' -> check only top-level under $SOURCE
-# - unanchored 'Path/...' -> match anywhere under $SOURCE
+# Fast: print ONLY excluded directories (no includes), grouped by pattern plus combined total.
 list_excluded_paths() {
   local file="$1"
-  echo ">> [Dry-Run] Enumerating ALL paths that would be excluded (by pattern):"
-  echo "---------------------------------------------------------------------------"
+  echo ">> [Dry-Run] Preview ONLY excluded directories"
+  echo "   Source: $SOURCE"
+  echo "   Patterns: $EXCLUDES_FILE"
+  echo "-------------------------------------------------------------"
+  # Per-pattern groups
   while IFS= read -r raw; do
-    local line; line="$(trim "$raw")"
-    [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
-
-    local anchored=0; local pat="$line"
-    if [[ "${pat:0:1}" == "/" ]]; then anchored=1; pat="${pat#/}"; fi
+    local pat; pat="$(trim "$raw")"
+    [[ -z "$pat" || "${pat:0:1}" == "#" ]] && continue
+    local anchored=0; [[ "${pat:0:1}" == "/" ]] && { anchored=1; pat="${pat#/}"; }
     [[ "${pat: -1}" == "/" ]] && pat="${pat%/}"
-
-    echo "Pattern: ${line}"
+    echo "Pattern: ${raw}"
     if (( anchored )); then
-      # anchored: only check SOURCE/<pat>
-      if [[ -e "${SOURCE}/${pat}" ]]; then
-        # list dir and all descendants
-        (cd "$SOURCE" && find "$pat" -mindepth 0 -maxdepth 0 -print; find "$pat" -mindepth 1 -print) || true
+      if [[ -d "$SOURCE/$pat" ]]; then
+        (cd "$SOURCE" && find "$pat" -type d -prune -print)
       else
-        echo "  (no matches at top-level: ${SOURCE}/${pat})"
+        echo "  (no matches at top level)"
       fi
     else
-      # unanchored: anywhere; if 'pat' contains '/', use -path, else use -name
-      if [[ "$pat" == */* ]]; then
-        (cd "$SOURCE" && find . -path "*/${pat}" -print | sed 's#^\./##') || true
-      else
-        (cd "$SOURCE" && find . -name "${pat}" -print | sed 's#^\./##') || true
-      fi
+      (cd "$SOURCE" && find . -type d -path "*/$pat" -prune -print | sed 's#^\./##') || true
     fi
     echo
   done < "$file"
+
+  # Combined total
+  echo "----- Combined (all excluded dirs) -----"
+  local pred=() out=()
+  # Build a single find predicate list
+  while IFS= read -r raw; do
+    local line; line="$(trim "$raw")"
+    [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
+    local anchored=0; [[ "${line:0:1}" == "/" ]] && { anchored=1; line="${line#/}"; }
+    [[ "${line: -1}" == "/" ]] && line="${line%/}"
+    if (( anchored )); then
+      pred+=( -path "$SOURCE/$line" )
+    else
+      pred+=( -path "*/$line" )
+    fi
+  done < "$file"
+  if ((${#pred[@]}==0)); then
+    echo "(no exclude patterns)"
+  else
+    # find $SOURCE -type d \( -path A -o -path B ... \) -prune -print
+    IFS=$'\n' read -r -d '' -a out < <(find "$SOURCE" -type d \( "${pred[@]/#/-o }" \) -prune -print 2>/dev/null | sed '1s/^-o //' && printf '\0')
+    printf '%s\n' "${out[@]}" | sed "s#^$SOURCE/##"
+    echo "Total excluded directories: ${#out[@]}"
+  fi
 }
 
 create_dmg() {
@@ -171,14 +185,11 @@ EOF
 }
 
 dry_run() {
-  echo ">> [Dry-Run] rsync dry-run (full verbose listing; NO files copied):"
-  echo "-------------------------------------------------------------------"
-  rsync -aE -n -vv --exclude-from="$EXCLUDES_FILE" "${SOURCE}/" /tmp/secure-backup-dryrun-stage || true
-  rm -rf /tmp/secure-backup-dryrun-stage 2>/dev/null || true
-  echo
-
+  echo ">> [Dry-Run] Preview ONLY excluded paths (no includes shown)"
+  echo "-------------------------------------------------------------"
   list_excluded_paths "$EXCLUDES_FILE"
 
+  echo
   echo ">> [Dry-Run] Translated 7z exclude flags (equivalent semantics):"
   EXCLUDE_FLAGS=(); build_7z_excludes_from_file "$EXCLUDES_FILE" EXCLUDE_FLAGS
   printf '  %s\n' "${EXCLUDE_FLAGS[@]}"
@@ -200,7 +211,7 @@ case "$MODE" in
   --both)    create_7z; create_dmg ;;
   --dry-run) dry_run ;;
   *) usage ;;
-esac
+endcase
 
 if [[ "$MODE" != "--dry-run" ]]; then
   echo ">> SHA-256 checksums:"
