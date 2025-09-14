@@ -93,7 +93,8 @@ create_dmg() {
     "${SOURCE}/" "${STAGE_DIR}/"
 
   echo ">> [DMG] Creating encrypted DMG: ${DMG_PATH}"
-  (echo "${PASSPHRASE}") | hdiutil create \
+  # IMPORTANT: use printf (not echo) so no newline/flag parsing corrupts the passphrase
+  printf '%s' "$PASSPHRASE" | hdiutil create \
     -encryption AES-256 -stdinpass \
     -volname "${VOLNAME}" \
     -format UDZO \
@@ -136,7 +137,6 @@ EOF
 dry_run() {
   echo ">> [Dry-Run] rsync dry-run (no files copied, full verbose listing)"
   echo "-----------------------------------------------------------------"
-  # Using a temp stage path to satisfy rsync's dest parameter; it won't write due to -n
   local DRY_STAGE="/tmp/secure-backup-dryrun-stage.$$"
   rsync -aE -n -vv --exclude-from="$EXCLUDES_FILE" "${SOURCE}/" "$DRY_STAGE" || true
   rm -rf "$DRY_STAGE" 2>/dev/null || true
